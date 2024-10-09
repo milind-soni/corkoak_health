@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Interactive Vector Tile Map with NDVI Time Series Chart</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        #chart-container {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            width: 80%;
+            max-width: 800px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="chart-container">
+        <canvas id="ndviChart"></canvas>
+    </div>
+    <script>
+        mapboxgl.accessToken = 'pk.eyJ1IjoibWlsaW5kc29uaSIsImEiOiJjbDRjc2ZxaTgwMW5hM3Bqbmlka3VweWVkIn0.AM0QzfbGzUZc04vZ6o2uaw';
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/dark-v10',
+            zoom: 12.09585638172128,
+            center: [-8.184161007797591, 39.0762503844284]
+        });
+
+        let chart = null;
+
+        function createChart(data) {
+            const ctx = document.getElementById('ndviChart').getContext('2d');
+            
+            if (chart) {
+                chart.destroy();
+            }
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map(d => d.date),
+                    datasets: [{
+                        label: 'NDVI',
+                        data: data.map(d => d.ndvi),
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'NDVI Time Series'
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'month'
+                            },
+                            title: {
+                                display: true,
+                                text: 'Date'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'NDVI'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function makeAPICall(geojson) {
+            fetch('http://localhost:5000/proxy', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ geojson: JSON.stringify(geojson) })
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log('API Response:', data);
+                const rows = data.trim().split('\n');
+                const headers = rows[0].split(',');
+                const ndviData = rows.slice(1).map(row => {
+                    const values = row.split(',');
+                    return {
+                        date: values[1],
+                        ndvi: parseFloat(values[2])
+                    };
+                });
+                createChart(ndviData);
+                document.getElementById('chart-container').style.display = 'block';
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error fetching NDVI data. Please try again.');
+            });
+        }
+
+        map.on('load', () => {
+            map.addSource('fused-vector-source', {
+                'type': 'vector',
+                'tiles': [
+                    'https://www.fused.io/server/v1/realtime-shared/fsh_4DTHqsOyH1a1KXobqnHsyC/run/tiles/{z}/{x}/{y}?dtype_out_vector=mvt'
+                ],
+                'minzoom': 6,
+                'maxzoom': 14
+            });
+
+            map.addLayer({
+                'id': 'fused-vector-layer',
+                'type': 'fill',
+                'source': 'fused-vector-source',
+                'source-layer': 'udf',
+                'paint': {
+                    'fill-color': 'rgb(53, 175, 109)',
+                    'fill-opacity': 0.6,
+                    'fill-outline-color': 'white'
+                }
+            });
+
+            map.on('click', 'fused-vector-layer', (e) => {
+                if (e.features.length > 0) {
+                    const feature = e.features[0];
+                    console.log('Clicked Feature:', feature);
+                    makeAPICall(feature.geometry);
+                }
+            });
+
+            map.on('mouseenter', 'fused-vector-layer', () => {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+
+            map.on('mouseleave', 'fused-vector-layer', () => {
+                map.getCanvas().style.cursor = '';
+            });
+        });
+    </script>
+</body>
+</html>
